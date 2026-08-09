@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>YT Downloader — (yt-dlp)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    /* small inline style for cookie banner */
+    #cookie-banner {
+      display:none;
+      padding:10px;
+      margin:8px 0;
+      border-radius:6px;
+      background:#fff7e6;
+      border:1px solid #f0ad4e;
+    }
+    #cookie-banner strong { color:#a04a00; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>YT Downloader (yt-dlp)</h1>
+
+    <!-- Cookie banner (hidden unless cookie_required) -->
+    <div id="cookie-banner" role="alert">
+      <strong>Verification required — please export cookies.txt</strong>
+      <div id="cookie-banner-text" style="margin-top:6px"></div>
+    </div>
+
+    <div class="card">
+      <label>YouTube URL (video or playlist):</label>
+      <input id="url" placeholder="https://www.youtube.com/..." />
+
+      <div class="row">
+        <div>
+          <label>Mode</label>
+          <select id="mode">
+            <option value="single">Single video</option>
+            <option value="playlist">Playlist (serial)</option>
+          </select>
+        </div>
+
+        <div>
+          <label>Quality</label>
+          <select id="choice">
+            <option value="best">Best (auto)</option>
+            <option value="2160">2160p (4K)</option>
+            <option value="1440">1440p (2K)</option>
+            <option value="1080">1080p</option>
+            <option value="720">720p</option>
+            <option value="480">480p</option>
+            <option value="360">360p</option>
+            <option value="audio">Audio only</option>
+          </select>
+        </div>
+
+        <div>
+          <label>Audio format (for audio-only)</label>
+          <select id="audio_format">
+            <option value="mp3">mp3</option>
+            <option value="m4a">m4a</option>
+            <option value="wav">wav</option>
+            <option value="opus">opus</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <input id="force_h264" type="checkbox" />
+        <label for="force_h264" style="margin:0">Force H.264 (re-encode to libx264 + aac, slower)</label>
+      </div>
+
+      <div style="margin-top:12px;">
+        <button id="start">Start Download</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Active tasks</h3>
+      <div id="tasks"></div>
+    </div>
+
+    <div class="card">
+      <h3>Downloaded files</h3>
+      <button id="refresh_files">Refresh files</button>
+      <ul id="files"></ul>
+    </div>
+
+    <footer>
+      <small>Requires yt-dlp and ffmpeg on PATH for re-encoding / audio extraction.</small>
+    </footer>
+  </div>
+
+<script>
+async function startDownload(){
+  const url = document.getElementById('url').value.trim();
+  if (!url) { alert('Enter URL'); return; }
+  const mode = document.getElementById('mode').value;
+  const choice = document.getElementById('choice').value;
+  const audio_format = document.getElementById('audio_format').value;
+  const force_h264 = document.getElementById('force_h264').checked;
+
+  const res = await fetch('/start_download', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({url, mode, choice, audio_format, force_h264})
+  });
+  const data = await res.json();
+  if (res.ok) {
+    addTaskToUI(data.task_id);
+    document.getElementById('url').value = '';
+  } else {
+    alert(data.error || 'Error starting task');
+  }
+}
+
+function addTaskToUI(taskId){
+  const container = document.getElementById('tasks');
+  const el = document.createElement('div');
+  el.className = 'task';
+  el.id = 'task-' + taskId;
+  el.innerHTML = `
+    <strong>Task:</strong> ${taskId} <br>
+    <div class="status">Queued...</div>
+    <div class="progress"></div>
+    <div class="files"></div>
+  `;
+  container.prepend(el);
+  pollTask(taskId);
+}
+
+async function pollTask(taskId){
+  const el = document.getElementById('task-' + taskId);
+  if (!el) return;
+  try {
+    const res = await fetch('/task_status/' + taskId);
+    if (!res.ok) {
+      el.querySelector('.status').innerText = 'Not found';
+      return;
+    }
+    const j = await res.json();
+    el.querySelector('.status').innerText = j.status || 'unknown';
+    const p = j.progress || {};
+
+    // show cookie required banner when backend instructs so
+    if (j.status === 'cookie_required' || (p && p.error === 'youtube_requires_cookies')) {
+      const banner = document.getElementById('cookie-banner');
+      const text = document.getElementById('cookie-banner-text');
+      banner.style.display = 'block';
+      text.innerHTML = `
+        YouTube is asking you to confirm you're not a bot. <br>
+        <strong>Steps:</strong>
+        <ol style="margin:6px 0 0 18px;padding:0">
+          <li>Open the browser where you are signed into YouTube and open the problem video.</li>
+          <li>Install a cookie exporter extension (search the extension store for "Get cookies.txt" or "cookies.txt exporter").</li>
+          <li>Export cookies in <strong>Netscape</strong> format and save the file as <code>cookies.txt</code>.</li>
+          <li>Place <code>cookies.txt</code> in the project root (the same folder as <code>app.py</code>), then refresh this page/UI.</li>
+        </ol>
+        <div style="margin-top:6px;color:#a00"><strong>Important:</strong> Do not share this <code>cookies.txt</code> file with anyone.</div>
+      `;
+      // Also show short message in the task progress
+      el.querySelector('.progress').innerText = p.message || 'YouTube requires cookies (see banner for steps).';
+      return;
+    }
+
+    if (p.status === 'downloading') {
+      let txt = '';
+      if (p.item) txt += `Item ${p.item}` + (p.of ? `/${p.of} ` : ' ');
+      if (p.percent !== undefined && p.percent !== null) txt += `${p.percent}% `;
+      if (p.eta) txt += `ETA ${p.eta}s `;
+      el.querySelector('.progress').innerText = txt;
+    } else if (p.status === 'queued' || p.status === 'finished' || p.status === 'processing') {
+      const msg = p.message || (p.status + (p.item ? ' item '+p.item : ''));
+      el.querySelector('.progress').innerText = msg;
+    } else {
+      el.querySelector('.progress').innerText = JSON.stringify(p);
+    }
+
+    // files list
+    const filesDiv = el.querySelector('.files');
+    filesDiv.innerHTML = '';
+    (j.files || []).forEach(f => {
+      const a = document.createElement('a');
+      a.href = '/downloads/' + encodeURIComponent(f);
+      a.innerText = f;
+      a.target = '_blank';
+      const li = document.createElement('div');
+      li.appendChild(a);
+      filesDiv.appendChild(li);
+    });
+
+    if (j.status === 'done' || j.status === 'error') {
+      if (j.status === 'error') {
+        el.querySelector('.status').innerText = 'error: ' + (j.error || 'unknown');
+      } else {
+        el.querySelector('.status').innerText = 'done';
+      }
+      return;
+    }
+  } catch (e) {
+    console.error(e);
+  }
+  setTimeout(() => pollTask(taskId), 1500);
+}
+
+async function refreshFiles(){
+  const res = await fetch('/list_downloads');
+  const j = await res.json();
+  const ul = document.getElementById('files');
+  ul.innerHTML = '';
+  (j.files || []).forEach(f => {
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.href = '/downloads/' + encodeURIComponent(f);
+    a.innerText = f;
+    a.target = '_blank';
+    li.appendChild(a);
+    ul.appendChild(li);
+  });
+}
+
+document.getElementById('start').addEventListener('click', startDownload);
+document.getElementById('refresh_files').addEventListener('click', refreshFiles);
+refreshFiles();
+</script>
+
+</body>
+</html>
