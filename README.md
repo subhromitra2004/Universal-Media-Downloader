@@ -58,14 +58,23 @@ To run this tool locally, your system must have the following dependencies insta
 <img width="906" height="360" alt="image" src="https://github.com/user-attachments/assets/ad4c08b4-1231-4e00-96b5-87bd247d5701" />
 
 📦 universal-media-downloader
+
  ┣ 📂 downloads/         # Output directory for your final MKV files
+ 
  ┣ 📂 static/
+ 
  ┃ ┗ 📜 style.css        # Clean, modern UI styling
+ 
  ┣ 📜 app.py             # Main Flask backend and threaded worker logic
+ 
  ┣ 📜 index.html         # Frontend interface
+ 
  ┣ 📜 install.bat        # Dependency installation script
+ 
  ┣ 📜 run.bat            # Server startup and browser launch script
+ 
  ┗ 📜 cookies.txt        # Your exported authentication file
+ 
 
  ⚠️ Important Disclaimer
 
